@@ -1,52 +1,33 @@
+#recorder
+import speech_recognition as sr
+import json
 import os
-import queue
-import sounddevice as sd
-import wave
-import webrtcvad
-import tempfile
-from faster_whisper import WhisperModel
 
-samplerate = 16000
-blocksize = 160
-channels = 1
-dtype = "int16"
-vad = webrtcvad.Vad(2)
-q = queue.Queue()
+# Отключаем предупреждения
+os.environ["PYTHONWARNINGS"] = "ignore"
+os.environ['SDL_AUDIODRIVER'] = 'pipewire'
 
-model = WhisperModel("medium", device="cpu", compute_type="int8")
+recognizer = sr.Recognizer()
 
-def callback(indata, frames, time_info, status):
-    if status:
-        print(status)
-    q.put(bytes(indata))
+def record_and_transcribe():
+    try:
+        with sr.Microphone() as mic:
+            # Настройка чувствительности к шуму
+            recognizer.adjust_for_ambient_noise(mic, duration=1)
+            pause_threshold = 1.5
 
-def record_and_transcribe() -> str:
-    print("🎤 Говори... (Ctrl+C для выхода)")
-    silence = 0
-    max_silence_blocks = 30
-    speech = bytearray()
+            print("Говорите...")
+            audio = recognizer.listen(mic)
 
-    with sd.RawInputStream(samplerate=samplerate, blocksize=blocksize, dtype=dtype,
-                           channels=channels, callback=callback):
-        while True:
-            audio = q.get()
-            if vad.is_speech(audio, samplerate):
-                speech.extend(audio)
-                silence = 0
-            elif speech:
-                silence += 1
-                if silence > max_silence_blocks:
-                    break
+            # Распознавание с помощью Vosk
+            json_result = recognizer.recognize_vosk(audio_data=audio, language='ru-RU')
+            result = json.loads(json_result)
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
-        wavfile = f.name
-        with wave.open(f, 'wb') as wf:
-            wf.setnchannels(channels)
-            wf.setsampwidth(2)
-            wf.setframerate(samplerate)
-            wf.writeframes(speech)
-
-    segments, _ = model.transcribe(wavfile)
-    full_text = "".join([segment.text for segment in segments])
-    os.remove(wavfile)
-    return full_text.strip()
+            text = result.get("text", "").strip().lower()
+            if text:
+                print("📝 Распознано:", text)
+                return text
+            else:
+                print("⚠️ Ничего не распознано.")
+    except Exception as e:
+        print(f"❌ Ошибка распознавания: {e}")
